@@ -59,8 +59,19 @@ export default function Home() {
 
   async function deleteEvent(id: string) {
     if (!confirm('Delete this event and all its photos?')) return
-    await supabase.from('events').delete().eq('id', id)
-    fetchEvents()
+    
+    const res = await fetch('/api/delete-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId: id }),
+    })
+
+    const data = await res.json()
+    if (data.success) {
+      fetchEvents()
+    } else {
+      alert('Delete failed. Please try again.')
+    }
   }
 
   return (

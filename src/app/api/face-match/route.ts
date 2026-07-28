@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     // Get photos from Supabase matching face IDs
     const { data: photos } = await supabase
       .from('photos')
-      .select('*')
+      .select('id, cloudinary_url, thumbnail_url, web_url, download_url')
       .eq('event_id', eventId)
       .in('rekognition_face_id', matchedFaceIds)
 

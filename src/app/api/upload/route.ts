@@ -1,3 +1,4 @@
+export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { v2 as cloudinary } from 'cloudinary'
 import { RekognitionClient, IndexFacesCommand } from '@aws-sdk/client-rekognition'

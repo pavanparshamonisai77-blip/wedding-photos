@@ -25,17 +25,28 @@ export async function POST(req: NextRequest) {
     const imageFile = formData.get('image') as File
     const eventId = formData.get('eventId') as string
 
+    console.log('EventId:', eventId)
+    console.log('SQS URL:', process.env.AWS_SQS_QUEUE_URL)
+    console.log('AWS Region:', process.env.AWS_REGION)
+
     const bytes = await imageFile.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
     // Push job to SQS
-    await sqs.send(new SendMessageCommand({
-      QueueUrl: process.env.AWS_SQS_QUEUE_URL!,
-      MessageBody: JSON.stringify({ eventId, timestamp: Date.now() }),
-    }))
+    try {
+      await sqs.send(new SendMessageCommand({
+        QueueUrl: process.env.AWS_SQS_QUEUE_URL!,
+        MessageBody: JSON.stringify({ eventId, timestamp: Date.now() }),
+      }))
+      console.log('SQS message sent successfully')
+    } catch (sqsError: any) {
+      console.error('SQS Error:', sqsError.message)
+      // Continue even if SQS fails
+    }
 
     // Search faces in Rekognition
     const collectionId = `${process.env.AWS_REKOGNITION_COLLECTION_PREFIX}-${eventId}`
+    console.log('Collection ID:', collectionId)
 
     let matchedFaceIds: string[] = []
 
@@ -46,40 +57,36 @@ export async function POST(req: NextRequest) {
         FaceMatchThreshold: 80,
         MaxFaces: 10,
       }))
-
+      console.log('Face matches:', searchResult.FaceMatches?.length)
       matchedFaceIds = searchResult.FaceMatches?.map(
         match => match.Face?.FaceId!
       ).filter(Boolean) || []
-    } catch (err) {
+    } catch (rekError: any) {
+      console.error('Rekognition Error:', rekError.message)
       return NextResponse.json({ error: 'No face detected' }, { status: 400 })
     }
 
-    // Get photos from Supabase matching face IDs
-    const { data: photos } = await supabase
+    console.log('Matched face IDs:', matchedFaceIds)
+
+    // Get photos from Supabase
+    const { data: photos, error: dbError } = await supabase
       .from('photos')
       .select('id, cloudinary_url, thumbnail_url, web_url, download_url')
       .eq('event_id', eventId)
       .in('rekognition_face_id', matchedFaceIds)
 
+    if (dbError) {
+      console.error('Supabase Error:', dbError.message)
+    }
+
+    console.log('Photos found:', photos?.length)
+
     // Track guest scan
     await supabase.from('guest_scans').insert({ event_id: eventId })
 
-    // Consume SQS message
-    const messages = await sqs.send(new ReceiveMessageCommand({
-      QueueUrl: process.env.AWS_SQS_QUEUE_URL!,
-      MaxNumberOfMessages: 1,
-    }))
-
-    if (messages.Messages?.[0]?.ReceiptHandle) {
-      await sqs.send(new DeleteMessageCommand({
-        QueueUrl: process.env.AWS_SQS_QUEUE_URL!,
-        ReceiptHandle: messages.Messages[0].ReceiptHandle,
-      }))
-    }
-
     return NextResponse.json({ success: true, photos: photos || [] })
-  } catch (error) {
-    console.error('Face match error:', error)
-    return NextResponse.json({ error: 'Face match failed' }, { status: 500 })
+  } catch (error: any) {
+    console.error('Face match error:', error.message)
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

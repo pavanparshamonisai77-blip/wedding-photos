@@ -54,9 +54,12 @@ export async function POST(req: NextRequest) {
           DetectionAttributes: [],
         })
         const indexResult = await rekognition.send(indexCommand)
+        console.log('Rekognition result:', JSON.stringify(indexResult.FaceRecords))
         faceId = indexResult.FaceRecords?.[0]?.Face?.FaceId || null
-      } catch (err) {
-        console.log('No face detected in photo')
+        console.log('Face ID:', faceId)
+      } catch (err: any) {
+        console.error('Rekognition error:', err.message)
+        console.error('Collection ID:', collectionId)
       }
 
       const { data } = await supabase

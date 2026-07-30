@@ -8,6 +8,9 @@ import { saveAs } from 'file-saver'
 interface Photo {
   id: string
   cloudinary_url: string
+  thumbnail_url: string
+  web_url: string
+  download_url: string
 }
 
 export default function GuestPage() {
@@ -35,11 +38,9 @@ export default function GuestPage() {
   async function startCamera() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' }
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
       })
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-      }
+      if (videoRef.current) videoRef.current.srcObject = stream
     } catch (err) {
       setError('Camera access denied. Please allow camera permission.')
     }
@@ -68,10 +69,7 @@ export default function GuestPage() {
       formData.append('eventId', id as string)
 
       try {
-        const res = await fetch('/api/face-match', {
-          method: 'POST',
-          body: formData,
-        })
+        const res = await fetch('/api/face-match', { method: 'POST', body: formData })
         const data = await res.json()
 
         if (data.error) {
@@ -88,9 +86,8 @@ export default function GuestPage() {
       } catch (err) {
         setError('Network error. Please try again.')
       }
-
       setScanning(false)
-    }, 'image/jpeg', 0.9)
+    }, 'image/jpeg', 0.95)
   }
 
   async function trackDownload(photoId: string) {
@@ -99,7 +96,8 @@ export default function GuestPage() {
 
   async function downloadSingle(photo: Photo) {
     try {
-      const res = await fetch(`/api/proxy-image?url=${encodeURIComponent(photo.cloudinary_url)}`)
+      const url = photo.download_url || photo.cloudinary_url
+      const res = await fetch(`/api/proxy-image?url=${encodeURIComponent(url)}`)
       const blob = await res.blob()
       saveAs(blob, `wedding-photo-${photo.id}.jpg`)
       await trackDownload(photo.id)
@@ -113,12 +111,13 @@ export default function GuestPage() {
     setDownloading(true)
     try {
       const zip = new JSZip()
-      for (let i = 0; i < photos.length; i++) {
-        const res = await fetch(`/api/proxy-image?url=${encodeURIComponent(photos[i].cloudinary_url)}`)
+      await Promise.all(photos.map(async (photo, i) => {
+        const url = photo.download_url || photo.cloudinary_url
+        const res = await fetch(`/api/proxy-image?url=${encodeURIComponent(url)}`)
         const blob = await res.blob()
         zip.file(`wedding-photo-${i + 1}.jpg`, blob)
-        await trackDownload(photos[i].id)
-      }
+        await trackDownload(photo.id)
+      }))
       const content = await zip.generateAsync({ type: 'blob' })
       saveAs(content, 'my-wedding-photos.zip')
     } catch (err) {
@@ -129,8 +128,8 @@ export default function GuestPage() {
 
   return (
     <main className="min-h-screen bg-gray-950 text-white p-6">
-      <h1 className="text-2xl font-bold text-center mb-2">💍 {eventName}</h1>
-      <p className="text-center text-gray-400 mb-8">Your Wedding Photos</p>
+      <h1 className="text-2xl font-bold text-center mb-1">💍 {eventName}</h1>
+      <p className="text-center text-gray-400 mb-6">Your Wedding Photos</p>
 
       {step === 'camera' && (
         <div className="max-w-md mx-auto">
@@ -142,8 +141,12 @@ export default function GuestPage() {
               muted
               className="w-full"
             />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-48 h-56 border-4 border-rose-500 rounded-full opacity-70" />
+            {/* Face guide overlay */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-3">
+              <div className="w-72 h-80 rounded-full border-4 border-rose-500 opacity-90 animate-pulse" />
+              <p className="text-white text-sm font-semibold bg-black bg-opacity-60 px-4 py-1 rounded-full">
+                Position your face in the circle
+              </p>
             </div>
           </div>
 
@@ -191,14 +194,13 @@ export default function GuestPage() {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {photos.map(photo => (
               <div key={photo.id} className="rounded-xl overflow-hidden bg-gray-900">
-                <div className="w-full h-48 bg-gray-800 relative">
-                  <img
-                    src={photo.cloudinary_url}
-                    alt="Your wedding photo"
-                    className="w-full h-48 object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                </div>
+                <img
+                  src={photo.web_url || photo.cloudinary_url}
+                  alt="Your wedding photo"
+                  className="w-full h-48 object-cover"
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
                 <button
                   onClick={() => downloadSingle(photo)}
                   className="w-full bg-rose-600 hover:bg-rose-700 py-2 text-sm font-semibold transition"

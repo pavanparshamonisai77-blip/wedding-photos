@@ -143,7 +143,7 @@ export default function GuestPage() {
             />
             {/* Face guide overlay */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-3">
-              <div className="w-72 h-80 rounded-full border-4 border-rose-500 opacity-90 animate-pulse" />
+              <div className="w-[340px] h-[420px] rounded-full border-4 border-rose-500 opacity-90 animate-pulse" />
               <p className="text-white text-sm font-semibold bg-black bg-opacity-60 px-4 py-1 rounded-full">
                 Position your face in the circle
               </p>

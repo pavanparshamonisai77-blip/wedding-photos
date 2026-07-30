@@ -90,19 +90,44 @@ export default function EventPage() {
     if (!e.target.files || e.target.files.length === 0) return
     setUploading(true)
 
-    const formData = new FormData()
-    formData.append('eventId', id as string)
-    Array.from(e.target.files).forEach(file => formData.append('photos', file))
+    const files = Array.from(e.target.files)
 
-    const res = await fetch('/api/upload', { method: 'POST', body: formData })
-    const data = await res.json()
+    for (const file of files) {
+      // Check file size — max 4MB
+      if (file.size > 4 * 1024 * 1024) {
+        alert(`${file.name} is too large. Maximum size is 4MB. Please compress the photo first.`)
+        continue
+      }
 
-    if (data.success) {
-      fetchPhotos()
-      fetchStats()
-    } else {
-      alert('Upload failed')
+      const formData = new FormData()
+      formData.append('eventId', id as string)
+      formData.append('photos', file)
+
+      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (data.success && data.photos?.[0]) {
+        const photo = data.photos[0]
+
+        // Call index-face API separately
+        await fetch('/api/index-face', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            photoId: photo.id,
+            cloudinaryUrl: photo.cloudinary_url,
+            eventId: id,
+            publicId: photo.cloudinary_public_id,
+          }),
+        })
+
+        fetchPhotos()
+        fetchStats()
+      } else {
+        alert(`Upload failed for ${file.name}`)
+      }
     }
+
     setUploading(false)
   }
 

@@ -1,4 +1,5 @@
 export const maxDuration = 60
+
 import { NextRequest, NextResponse } from 'next/server'
 import { v2 as cloudinary } from 'cloudinary'
 import { RekognitionClient, IndexFacesCommand } from '@aws-sdk/client-rekognition'
@@ -18,6 +19,34 @@ const rekognition = new RekognitionClient({
   },
 })
 
+async function indexFaceInBackground(
+  buffer: Buffer,
+  collectionId: string,
+  publicId: string,
+  photoId: string
+) {
+  try {
+    const indexCommand = new IndexFacesCommand({
+      CollectionId: collectionId,
+      Image: { Bytes: buffer },
+      ExternalImageId: publicId.replace(/\//g, '_'),
+      DetectionAttributes: [],
+    })
+    const indexResult = await rekognition.send(indexCommand)
+    const faceId = indexResult.FaceRecords?.[0]?.Face?.FaceId || null
+
+    if (faceId) {
+      await supabase
+        .from('photos')
+        .update({ rekognition_face_id: faceId })
+        .eq('id', photoId)
+      console.log('Face indexed successfully:', faceId)
+    }
+  } catch (err: any) {
+    console.error('Background face index error:', err.message)
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -34,6 +63,7 @@ export async function POST(req: NextRequest) {
       const bytes = await file.arrayBuffer()
       const buffer = Buffer.from(bytes)
 
+      // Step 1 — Upload to Cloudinary
       const cloudinaryResult = await new Promise<any>((resolve, reject) => {
         cloudinary.uploader.upload_stream(
           { folder: `wedding-photos/${eventId}` },
@@ -44,41 +74,29 @@ export async function POST(req: NextRequest) {
         ).end(buffer)
       })
 
-      const collectionId = `${process.env.AWS_REKOGNITION_COLLECTION_PREFIX}-${eventId}`
-      let faceId = null
-      try {
-        const indexCommand = new IndexFacesCommand({
-          CollectionId: collectionId,
-          Image: { Bytes: buffer },
-          ExternalImageId: cloudinaryResult.public_id.replace(/\//g, '_'),
-          DetectionAttributes: [],
-        })
-        const indexResult = await rekognition.send(indexCommand)
-        console.log('Rekognition result:', JSON.stringify(indexResult.FaceRecords))
-        faceId = indexResult.FaceRecords?.[0]?.Face?.FaceId || null
-        console.log('Face ID:', faceId)
-      } catch (err: any) {
-        console.error('Rekognition error:', err.message)
-        console.error('Collection ID:', collectionId)
-      }
-
+      // Step 2 — Save to Supabase immediately without face ID
       const { data } = await supabase
         .from('photos')
         .insert({
           event_id: eventId,
           cloudinary_url: cloudinaryResult.secure_url,
           cloudinary_public_id: cloudinaryResult.public_id,
-          rekognition_face_id: faceId,
+          rekognition_face_id: null,
         })
         .select()
         .single()
 
       results.push(data)
+
+      // Step 3 — Index face in background (non-blocking)
+      const collectionId = `${process.env.AWS_REKOGNITION_COLLECTION_PREFIX}-${eventId}`
+      indexFaceInBackground(buffer, collectionId, cloudinaryResult.public_id, data.id)
     }
 
+    // Return success immediately after Cloudinary upload
     return NextResponse.json({ success: true, photos: results })
-  } catch (error) {
-    console.error('Upload error:', error)
+  } catch (error: any) {
+    console.error('Upload error:', error.message)
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
   }
 }

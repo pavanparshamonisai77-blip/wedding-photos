@@ -68,10 +68,13 @@ export async function POST(req: NextRequest) {
     if (!imageRes.ok) throw new Error('Failed to fetch image')
     const imageBuffer = await imageRes.arrayBuffer()
     // Resize to under 5MB for Rekognition
-    buffer = await sharp(Buffer.from(imageBuffer))
-      .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 85 })
-      .toBuffer()
+    const rawBuffer = Buffer.from(imageBuffer)
+console.log('Raw image size:', rawBuffer.length)
+buffer = await sharp(rawBuffer)
+  .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
+  .jpeg({ quality: 85 })
+  .toBuffer()
+console.log('Compressed size:', buffer.length)
     break
   } catch (err: any) {
     console.log(`Image fetch attempt ${attempt} failed:`, err.message)

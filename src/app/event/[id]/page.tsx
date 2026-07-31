@@ -30,6 +30,7 @@ export default function EventPage() {
   const [photos, setPhotos] = useState<Photo[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, stage: '' })
   const [stats, setStats] = useState<Stats>({ totalPhotos: 0, totalScans: 0, totalDownloads: 0 })
 
   useEffect(() => {
@@ -91,58 +92,91 @@ export default function EventPage() {
     setUploading(true)
 
     const files = Array.from(e.target.files)
+    const total = files.length
     let uploaded = 0
+    let failed = 0
 
-    for (const file of files) {
-      try {
-        // Step 1 — Get signature from our API
-        const sigRes = await fetch('/api/sign-upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ eventId: id }),
-        })
-        const { signature, timestamp, folder, cloudName, apiKey } = await sigRes.json()
+    setUploadProgress({ current: 0, total, stage: 'Uploading photos...' })
 
-        // Step 2 — Upload directly to Cloudinary (bypasses Vercel)
-        const formData = new FormData()
-        formData.append('file', file)
-        formData.append('signature', signature)
-        formData.append('timestamp', timestamp)
-        formData.append('folder', folder)
-        formData.append('api_key', apiKey)
+    // Upload in batches of 5 simultaneously
+    const batchSize = 5
+    for (let i = 0; i < files.length; i += batchSize) {
+      const batch = files.slice(i, i + batchSize)
 
-        const cloudRes = await fetch(
-          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-          { method: 'POST', body: formData }
-        )
-        const cloudData = await cloudRes.json()
+      await Promise.all(batch.map(async (file) => {
+        try {
+          // Step 1 — Get signature
+          const sigRes = await fetch('/api/sign-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ eventId: id }),
+          })
+          const { signature, timestamp, folder, cloudName, apiKey } = await sigRes.json()
 
-        if (!cloudData.secure_url) {
-          console.error('Cloudinary upload failed:', cloudData)
-          continue
+          // Step 2 — Upload directly to Cloudinary
+          const formData = new FormData()
+          formData.append('file', file)
+          formData.append('signature', signature)
+          formData.append('timestamp', timestamp)
+          formData.append('folder', folder)
+          formData.append('api_key', apiKey)
+
+          const cloudRes = await fetch(
+            `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+            { method: 'POST', body: formData }
+          )
+          const cloudData = await cloudRes.json()
+
+          if (!cloudData.secure_url) {
+            failed++
+            return
+          }
+
+          // Step 3 — Save to Supabase + index face
+          await fetch('/api/save-photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              eventId: id,
+              cloudinaryUrl: cloudData.secure_url,
+              publicId: cloudData.public_id,
+            }),
+          })
+
+          uploaded++
+          setUploadProgress({ 
+            current: uploaded, 
+            total, 
+            stage: `Uploading photos...` 
+          })
+        } catch (err) {
+          console.error('Upload error:', err)
+          failed++
         }
+      }))
 
-        // Step 3 — Save to Supabase + index face in Rekognition
-        await fetch('/api/save-photo', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            eventId: id,
-            cloudinaryUrl: cloudData.secure_url,
-            publicId: cloudData.public_id,
-          }),
-        })
-
-        uploaded++
-        fetchPhotos()
-        fetchStats()
-      } catch (err) {
-        console.error('Upload error:', err)
-      }
+      fetchPhotos()
+      fetchStats()
     }
 
+    // Auto reindex after all uploads
+    setUploadProgress({ current: uploaded, total, stage: 'Indexing faces...' })
+    await fetch('/api/reindex-faces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId: id }),
+    })
+
+    fetchPhotos()
+    fetchStats()
     setUploading(false)
-    alert(`${uploaded}/${files.length} photos uploaded successfully!`)
+    setUploadProgress({ current: 0, total: 0, stage: '' })
+
+    if (failed > 0) {
+      alert(`${uploaded} photos uploaded successfully. ${failed} failed.`)
+    } else {
+      alert(`All ${uploaded} photos uploaded and faces indexed successfully!`)
+    }
   }
 
   async function deletePhoto(photoId: string, publicId: string) {
@@ -219,15 +253,33 @@ export default function EventPage() {
 
       {/* Upload */}
       <div className="max-w-4xl mx-auto mb-8">
-        <label className="block w-full bg-rose-600 hover:bg-rose-700 rounded-2xl p-6 text-center cursor-pointer transition">
+        <label className={`block w-full rounded-2xl p-6 text-center transition ${uploading ? 'bg-gray-700 cursor-not-allowed' : 'bg-rose-600 hover:bg-rose-700 cursor-pointer'}`}>
           <input
             type="file"
             multiple
             accept="image/*"
             className="hidden"
             onChange={uploadPhotos}
+            disabled={uploading}
           />
-          {uploading ? '⏳ Uploading directly to cloud...' : '📷 Click to Upload Photos (No size limit)'}
+          {uploading ? (
+            <div>
+              <p className="font-semibold text-lg mb-2">
+                {uploadProgress.stage}
+              </p>
+              <p className="text-sm text-gray-300 mb-3">
+                {uploadProgress.current} / {uploadProgress.total} photos
+              </p>
+              <div className="w-full bg-gray-600 rounded-full h-3">
+                <div
+                  className="bg-rose-500 h-3 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress.total > 0 ? (uploadProgress.current / uploadProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="font-semibold text-lg">📷 Click to Upload Photos (No size limit)</p>
+          )}
         </label>
       </div>
 

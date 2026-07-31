@@ -91,44 +91,58 @@ export default function EventPage() {
     setUploading(true)
 
     const files = Array.from(e.target.files)
+    let uploaded = 0
 
     for (const file of files) {
-      // Check file size — max 4MB
-      if (file.size > 4 * 1024 * 1024) {
-        alert(`${file.name} is too large. Maximum size is 4MB. Please compress the photo first.`)
-        continue
-      }
+      try {
+        // Step 1 — Get signature from our API
+        const sigRes = await fetch('/api/sign-upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventId: id }),
+        })
+        const { signature, timestamp, folder, cloudName, apiKey } = await sigRes.json()
 
-      const formData = new FormData()
-      formData.append('eventId', id as string)
-      formData.append('photos', file)
+        // Step 2 — Upload directly to Cloudinary (bypasses Vercel)
+        const formData = new FormData()
+        formData.append('file', file)
+        formData.append('signature', signature)
+        formData.append('timestamp', timestamp)
+        formData.append('folder', folder)
+        formData.append('api_key', apiKey)
 
-      const res = await fetch('/api/upload', { method: 'POST', body: formData })
-      const data = await res.json()
+        const cloudRes = await fetch(
+          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+          { method: 'POST', body: formData }
+        )
+        const cloudData = await cloudRes.json()
 
-      if (data.success && data.photos?.[0]) {
-        const photo = data.photos[0]
+        if (!cloudData.secure_url) {
+          console.error('Cloudinary upload failed:', cloudData)
+          continue
+        }
 
-        // Call index-face API separately
-        await fetch('/api/index-face', {
+        // Step 3 — Save to Supabase + index face in Rekognition
+        await fetch('/api/save-photo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            photoId: photo.id,
-            cloudinaryUrl: photo.cloudinary_url,
             eventId: id,
-            publicId: photo.cloudinary_public_id,
+            cloudinaryUrl: cloudData.secure_url,
+            publicId: cloudData.public_id,
           }),
         })
 
+        uploaded++
         fetchPhotos()
         fetchStats()
-      } else {
-        alert(`Upload failed for ${file.name}`)
+      } catch (err) {
+        console.error('Upload error:', err)
       }
     }
 
     setUploading(false)
+    alert(`${uploaded}/${files.length} photos uploaded successfully!`)
   }
 
   async function deletePhoto(photoId: string, publicId: string) {
@@ -213,7 +227,7 @@ export default function EventPage() {
             className="hidden"
             onChange={uploadPhotos}
           />
-          {uploading ? '⏳ Uploading & indexing faces...' : '📷 Click to Upload Photos'}
+          {uploading ? '⏳ Uploading directly to cloud...' : '📷 Click to Upload Photos (No size limit)'}
         </label>
       </div>
 

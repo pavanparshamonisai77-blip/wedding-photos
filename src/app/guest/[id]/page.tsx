@@ -4,6 +4,9 @@ import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import JSZip from 'jszip'
 import { saveAs } from 'file-saver'
+import toast from 'react-hot-toast'
+import { PhotoProvider, PhotoView } from 'react-photo-view'
+import 'react-photo-view/dist/react-photo-view.css'
 
 interface Photo {
   id: string
@@ -82,6 +85,7 @@ export default function GuestPage() {
           setPhotos(data.photos)
           setStep('results')
           stopCamera()
+          toast.success(`Found ${data.photos.length} photos of you!`)
         }
       } catch (err) {
         setError('Network error. Please try again.')
@@ -101,6 +105,7 @@ export default function GuestPage() {
       const blob = await res.blob()
       saveAs(blob, `wedding-photo-${photo.id}.jpg`)
       await trackDownload(photo.id)
+      toast.success('Photo downloaded!')
     } catch (err) {
       window.open(photo.cloudinary_url, '_blank')
       await trackDownload(photo.id)
@@ -109,6 +114,7 @@ export default function GuestPage() {
 
   async function downloadAll() {
     setDownloading(true)
+    const toastId = toast.loading('Preparing your photos...')
     try {
       const zip = new JSZip()
       await Promise.all(photos.map(async (photo, i) => {
@@ -120,28 +126,39 @@ export default function GuestPage() {
       }))
       const content = await zip.generateAsync({ type: 'blob' })
       saveAs(content, 'my-wedding-photos.zip')
+      toast.success('All photos downloaded!', { id: toastId })
     } catch (err) {
-      alert('Download failed. Please try downloading individually.')
+      toast.error('Download failed. Try individually.', { id: toastId })
     }
     setDownloading(false)
   }
 
+  async function sharePhoto(photo: Photo) {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'My Wedding Photo',
+          text: 'Check out my wedding photo!',
+          url: photo.cloudinary_url,
+        })
+      } catch (err) {
+        // User cancelled share
+      }
+    } else {
+      navigator.clipboard.writeText(photo.cloudinary_url)
+      toast.success('Photo link copied!')
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-gray-950 text-white p-6">
+    <main className="min-h-screen bg-gray-950 text-white p-4">
       <h1 className="text-2xl font-bold text-center mb-1">💍 {eventName}</h1>
       <p className="text-center text-gray-400 mb-6">Your Wedding Photos</p>
 
       {step === 'camera' && (
         <div className="max-w-md mx-auto">
           <div className="relative rounded-2xl overflow-hidden mb-6 bg-gray-900">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full"
-            />
-            {/* Face guide overlay */}
+            <video ref={videoRef} autoPlay playsInline muted className="w-full" />
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-3">
               <div className="w-[340px] h-[420px] rounded-full border-4 border-rose-500 opacity-90 animate-pulse" />
               <p className="text-white text-sm font-semibold bg-black bg-opacity-60 px-4 py-1 rounded-full">
@@ -153,7 +170,7 @@ export default function GuestPage() {
           <canvas ref={canvasRef} className="hidden" />
 
           {error && (
-            <p className="text-red-400 text-center mb-4 text-sm">{error}</p>
+            <p className="text-red-400 text-center mb-4 text-sm bg-red-950 rounded-xl p-3">{error}</p>
           )}
 
           <button
@@ -172,44 +189,56 @@ export default function GuestPage() {
 
       {step === 'results' && (
         <div className="max-w-2xl mx-auto">
-          <div className="flex justify-between items-center mb-6">
-            <p className="text-gray-400">{photos.length} photo{photos.length !== 1 ? 's' : ''} found</p>
-            <div className="flex gap-3">
+          <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
+            <p className="text-gray-400 font-semibold">{photos.length} photo{photos.length !== 1 ? 's' : ''} found</p>
+            <div className="flex gap-2 flex-wrap">
               <button
                 onClick={() => { setStep('camera'); setPhotos([]); startCamera() }}
-                className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm transition"
+                className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm transition"
               >
                 Scan Again
               </button>
               <button
                 onClick={downloadAll}
                 disabled={downloading}
-                className="bg-rose-600 hover:bg-rose-700 disabled:bg-gray-700 px-4 py-2 rounded-lg text-sm transition"
+                className="bg-rose-600 hover:bg-rose-700 disabled:bg-gray-700 px-3 py-2 rounded-lg text-sm transition"
               >
-                {downloading ? 'Downloading...' : 'Download All'}
+                {downloading ? 'Downloading...' : '⬇ Download All'}
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {photos.map(photo => (
-              <div key={photo.id} className="rounded-xl overflow-hidden bg-gray-900">
-                <img
-                  src={photo.web_url || photo.cloudinary_url}
-                  alt="Your wedding photo"
-                  className="w-full h-48 object-cover"
-                  loading="lazy"
-                  referrerPolicy="no-referrer"
-                />
-                <button
-                  onClick={() => downloadSingle(photo)}
-                  className="w-full bg-rose-600 hover:bg-rose-700 py-2 text-sm font-semibold transition"
-                >
-                  ⬇ Download
-                </button>
-              </div>
-            ))}
-          </div>
+          <PhotoProvider>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {photos.map(photo => (
+                <div key={photo.id} className="rounded-xl overflow-hidden bg-gray-900">
+                  <PhotoView src={photo.cloudinary_url}>
+                    <img
+                      src={photo.web_url || photo.cloudinary_url}
+                      alt="Your wedding photo"
+                      className="w-full h-48 object-cover cursor-pointer hover:opacity-90 transition"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  </PhotoView>
+                  <div className="flex gap-1 p-1">
+                    <button
+                      onClick={() => downloadSingle(photo)}
+                      className="flex-1 bg-rose-600 hover:bg-rose-700 py-2 text-xs font-semibold rounded-lg transition"
+                    >
+                      ⬇ Download
+                    </button>
+                    <button
+                      onClick={() => sharePhoto(photo)}
+                      className="bg-gray-700 hover:bg-gray-600 px-3 py-2 text-xs rounded-lg transition"
+                    >
+                      Share
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </PhotoProvider>
         </div>
       )}
     </main>

@@ -1,4 +1,3 @@
-import sharp from 'sharp'
 export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -12,6 +11,26 @@ const rekognition = new RekognitionClient({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
 })
+
+function getResizedCloudinaryUrl(url: string): string {
+  // Insert transformation to resize to max 1920px and convert to jpg
+  return url.replace('/upload/', '/upload/w_1920,h_1920,c_limit,f_jpg,q_85/')
+}
+
+async function fetchImageBuffer(url: string): Promise<Buffer | null> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error('Failed to fetch')
+      const data = await res.arrayBuffer()
+      return Buffer.from(data)
+    } catch (err: any) {
+      console.log(`Fetch attempt ${attempt} failed:`, err.message)
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000))
+    }
+  }
+  return null
+}
 
 async function indexFaceWithRetry(
   buffer: Buffer,
@@ -28,16 +47,10 @@ async function indexFaceWithRetry(
         DetectionAttributes: [],
       }))
       const faceId = indexResult.FaceRecords?.[0]?.Face?.FaceId || null
-      if (faceId) {
-        console.log(`Face indexed on attempt ${attempt}:`, faceId)
-        return faceId
-      }
+      if (faceId) return faceId
     } catch (err: any) {
-      console.log(`Attempt ${attempt} failed:`, err.message)
-      if (attempt < retries) {
-        // Wait 2 seconds before retrying
-        await new Promise(resolve => setTimeout(resolve, 2000))
-      }
+      console.log(`Rekognition attempt ${attempt} failed:`, err.message)
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000))
     }
   }
   return null
@@ -59,37 +72,19 @@ export async function POST(req: NextRequest) {
       .select()
       .single()
 
-    // Fetch image from Cloudinary with retry
-    // Fetch image from Cloudinary with retry
-      let buffer: Buffer | null = null
-        for (let attempt = 1; attempt <= 3; attempt++) {
-       try {
-    const imageRes = await fetch(cloudinaryUrl)
-if (!imageRes.ok) throw new Error('Failed to fetch image')
-const blob = await imageRes.blob()
-const arrayBuffer = await blob.arrayBuffer()
-const rawBuffer = Buffer.allocUnsafe(arrayBuffer.byteLength)
-const view = new Uint8Array(arrayBuffer)
-for (let i = 0; i < view.length; i++) rawBuffer[i] = view[i]
-console.log('Raw image size:', rawBuffer.length)
-buffer = await sharp(rawBuffer)
-  .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
-  .jpeg({ quality: 85 })
-  .toBuffer()
-console.log('Compressed size:', buffer.length)
-    break
-  } catch (err: any) {
-    console.log(`Image fetch attempt ${attempt} failed:`, err.message)
-    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 2000))
-  }
-}
+    // Use Cloudinary URL transformation to get resized image under 5MB
+    const resizedUrl = getResizedCloudinaryUrl(cloudinaryUrl)
+    console.log('Fetching resized URL:', resizedUrl)
 
+    const buffer = await fetchImageBuffer(resizedUrl)
     if (!buffer) {
-      console.error('Failed to fetch image after 3 attempts')
+      console.error('Failed to fetch image')
       return NextResponse.json({ success: true, photo, faceIndexed: false })
     }
 
-    // Index face with retry
+    console.log('Image size:', buffer.length)
+
+    // Index face in Rekognition
     const collectionId = `${process.env.AWS_REKOGNITION_COLLECTION_PREFIX}-${eventId}`
     const faceId = await indexFaceWithRetry(buffer, collectionId, publicId)
 
@@ -98,15 +93,12 @@ console.log('Compressed size:', buffer.length)
         .from('photos')
         .update({ rekognition_face_id: faceId })
         .eq('id', photo.id)
+      console.log('Face indexed:', faceId)
     } else {
-      console.log('No face detected after 3 attempts — will need reindex')
+      console.log('No face detected')
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      photo,
-      faceIndexed: !!faceId 
-    })
+    return NextResponse.json({ success: true, photo, faceIndexed: !!faceId })
   } catch (error: any) {
     console.error('Save photo error:', error.message)
     return NextResponse.json({ error: error.message }, { status: 500 })

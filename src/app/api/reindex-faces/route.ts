@@ -1,4 +1,3 @@
-import sharp from 'sharp'
 export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -12,6 +11,10 @@ const rekognition = new RekognitionClient({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
 })
+
+function getResizedCloudinaryUrl(url: string): string {
+  return url.replace('/upload/', '/upload/w_1920,h_1920,c_limit,f_jpg,q_85/')
+}
 
 async function indexFaceWithRetry(
   buffer: Buffer,
@@ -31,7 +34,7 @@ async function indexFaceWithRetry(
       if (faceId) return faceId
     } catch (err: any) {
       console.log(`Attempt ${attempt} failed:`, err.message)
-      if (attempt < retries) await new Promise(resolve => setTimeout(resolve, 2000))
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000))
     }
   }
   return null
@@ -57,16 +60,12 @@ export async function POST(req: NextRequest) {
 
     for (const photo of photos) {
       try {
-        const imageRes = await fetch(photo.cloudinary_url)
-const blob = await imageRes.blob()
-const arrayBuffer = await blob.arrayBuffer()
-const rawBuffer = Buffer.allocUnsafe(arrayBuffer.byteLength)
-const view = new Uint8Array(arrayBuffer)
-for (let i = 0; i < view.length; i++) rawBuffer[i] = view[i]
-const buffer = await sharp(rawBuffer)
-  .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
-  .jpeg({ quality: 85 })
-  .toBuffer()
+        const resizedUrl = getResizedCloudinaryUrl(photo.cloudinary_url)
+        const res = await fetch(resizedUrl)
+        const data = await res.arrayBuffer()
+        const buffer = Buffer.from(data)
+
+        console.log(`Photo ${photo.id} size:`, buffer.length)
 
         const faceId = await indexFaceWithRetry(
           buffer,
@@ -82,7 +81,7 @@ const buffer = await sharp(rawBuffer)
           indexed++
         }
       } catch (err: any) {
-        console.log(`Failed to reindex photo ${photo.id}:`, err.message)
+        console.log(`Failed photo ${photo.id}:`, err.message)
       }
     }
 

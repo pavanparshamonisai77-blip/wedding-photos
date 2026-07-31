@@ -1,3 +1,4 @@
+import sharp from 'sharp'
 export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -59,19 +60,24 @@ export async function POST(req: NextRequest) {
       .single()
 
     // Fetch image from Cloudinary with retry
-    let buffer: Buffer | null = null
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const imageRes = await fetch(cloudinaryUrl)
-        if (!imageRes.ok) throw new Error('Failed to fetch image')
-        const imageBuffer = await imageRes.arrayBuffer()
-        buffer = Buffer.from(imageBuffer)
-        break
-      } catch (err: any) {
-        console.log(`Image fetch attempt ${attempt} failed:`, err.message)
-        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 2000))
-      }
-    }
+    // Fetch image from Cloudinary with retry
+      let buffer: Buffer | null = null
+        for (let attempt = 1; attempt <= 3; attempt++) {
+       try {
+    const imageRes = await fetch(cloudinaryUrl)
+    if (!imageRes.ok) throw new Error('Failed to fetch image')
+    const imageBuffer = await imageRes.arrayBuffer()
+    // Resize to under 5MB for Rekognition
+    buffer = await sharp(Buffer.from(imageBuffer))
+      .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer()
+    break
+  } catch (err: any) {
+    console.log(`Image fetch attempt ${attempt} failed:`, err.message)
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 2000))
+  }
+}
 
     if (!buffer) {
       console.error('Failed to fetch image after 3 attempts')

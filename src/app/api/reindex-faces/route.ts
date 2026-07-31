@@ -58,9 +58,12 @@ export async function POST(req: NextRequest) {
     for (const photo of photos) {
       try {
         const imageRes = await fetch(photo.cloudinary_url)
-const imageBuffer = await imageRes.arrayBuffer()
-// Resize to under 5MB for Rekognition
-const buffer = await sharp(Buffer.from(new Uint8Array(imageBuffer)))
+const blob = await imageRes.blob()
+const arrayBuffer = await blob.arrayBuffer()
+const rawBuffer = Buffer.allocUnsafe(arrayBuffer.byteLength)
+const view = new Uint8Array(arrayBuffer)
+for (let i = 0; i < view.length; i++) rawBuffer[i] = view[i]
+const buffer = await sharp(rawBuffer)
   .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
   .jpeg({ quality: 85 })
   .toBuffer()

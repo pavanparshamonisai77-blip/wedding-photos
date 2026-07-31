@@ -65,10 +65,12 @@ export async function POST(req: NextRequest) {
         for (let attempt = 1; attempt <= 3; attempt++) {
        try {
     const imageRes = await fetch(cloudinaryUrl)
-    if (!imageRes.ok) throw new Error('Failed to fetch image')
-    const imageBuffer = await imageRes.arrayBuffer()
-    // Resize to under 5MB for Rekognition
-    const rawBuffer = Buffer.from(new Uint8Array(imageBuffer))
+if (!imageRes.ok) throw new Error('Failed to fetch image')
+const blob = await imageRes.blob()
+const arrayBuffer = await blob.arrayBuffer()
+const rawBuffer = Buffer.allocUnsafe(arrayBuffer.byteLength)
+const view = new Uint8Array(arrayBuffer)
+for (let i = 0; i < view.length; i++) rawBuffer[i] = view[i]
 console.log('Raw image size:', rawBuffer.length)
 buffer = await sharp(rawBuffer)
   .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
